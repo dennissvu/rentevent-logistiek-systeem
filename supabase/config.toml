@@ -1,0 +1,10 @@
+project_id = "hkvxislburjwuiirnoqs"
+
+[functions.send-driver-reminders]
+verify_jwt = false
+
+[functions.planning-chat]
+verify_jwt = false
+
+[functions.execute-plan]
+verify_jwt = false
