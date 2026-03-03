@@ -36,11 +36,13 @@ const getProjectRefFromAnonKey = (anonKey: string | undefined): string | undefin
 const SUPABASE_PUBLISHABLE_KEY = normalizeEnvValue(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
 const ENV_SUPABASE_URL = normalizeEnvValue(import.meta.env.VITE_SUPABASE_URL);
 const PROJECT_ID = normalizeEnvValue(import.meta.env.VITE_SUPABASE_PROJECT_ID) ?? getProjectRefFromAnonKey(SUPABASE_PUBLISHABLE_KEY);
-const SUPABASE_URL = isValidHttpUrl(ENV_SUPABASE_URL)
+const SUPABASE_URL_RAW = isValidHttpUrl(ENV_SUPABASE_URL)
   ? ENV_SUPABASE_URL
   : PROJECT_ID
     ? `https://${PROJECT_ID}.supabase.co`
     : undefined;
+// Geen trailing slash: voorkomt dubbele slash in paden (bijv. /rest/v1/...) en mogelijke 401/404
+const SUPABASE_URL = SUPABASE_URL_RAW?.replace(/\/+$/, "") ?? undefined;
 
 if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
   throw new Error(

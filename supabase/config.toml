@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.reseed-database]
 verify_jwt = false
+
+[functions.reload-schema]
+verify_jwt = false

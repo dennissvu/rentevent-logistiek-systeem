@@ -6,6 +6,7 @@ import { useOrdersDb } from '@/hooks/useOrdersDb';
 interface OrdersContextType {
   orders: OrderFormData[];
   isLoading: boolean;
+  error: Error | null;
   addOrder: (order: OrderFormData) => void;
   updateOrder: (id: string, updates: Partial<OrderFormData>) => void;
   deleteOrder: (id: string) => void;
@@ -15,7 +16,7 @@ interface OrdersContextType {
 const OrdersContext = createContext<OrdersContextType | undefined>(undefined);
 
 export function OrdersProvider({ children }: { children: ReactNode }) {
-  const { orders, isLoading, addOrder, updateOrder, deleteOrder } = useOrdersDb();
+  const { orders, isLoading, error, addOrder, updateOrder, deleteOrder } = useOrdersDb();
 
   // Convert optie and bevestigde orders to planning format
   const getPlanningOrders = (): Order[] => {
@@ -78,6 +79,7 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
       value={{
         orders,
         isLoading,
+        error,
         addOrder,
         updateOrder,
         deleteOrder,

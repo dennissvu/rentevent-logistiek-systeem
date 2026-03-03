@@ -669,7 +669,11 @@ BEGIN
   FOR i IN 1..coalesce(array_length(arr, 1), 0) LOOP
     stmt := trim(arr[i]);
     IF length(stmt) > 0 AND left(stmt, 2) <> '--' AND (stmt NOT LIKE '--%') THEN
-      EXECUTE stmt || ';';
+      BEGIN
+        EXECUTE stmt || ';';
+      EXCEPTION WHEN undefined_table OR undefined_object THEN
+        NULL; /* tabel/object bestaat niet (bv. migratie nog niet gedraaid), overslaan */
+      END;
     END IF;
   END LOOP;
 END;
@@ -677,3 +681,6 @@ $fn$;
 GRANT EXECUTE ON FUNCTION public.reseed_logistics_data() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.reseed_logistics_data() TO anon;
 GRANT EXECUTE ON FUNCTION public.reseed_logistics_data() TO service_role;
+
+-- Zorg dat PostgREST de nieuwe functie ziet (schema cache herladen)
+NOTIFY pgrst, 'reload schema';

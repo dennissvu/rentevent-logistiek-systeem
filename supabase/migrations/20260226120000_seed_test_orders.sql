@@ -3,19 +3,31 @@
 -- Testdata met complexe orders die meerdere chauffeurs/transporten vereisen
 -- ============================================================================
 
--- Eerst bestaande testdata opruimen (in juiste volgorde vanwege foreign keys)
-DELETE FROM order_load_unload_instructions;
-DELETE FROM driver_day_route_stops;
-DELETE FROM driver_day_routes;
-DELETE FROM order_transport_assignments;
-DELETE FROM order_signatures;
-DELETE FROM driver_schedule_exceptions;
-DELETE FROM driver_weekly_schedules;
-DELETE FROM orders;
-DELETE FROM transport_combis;
-DELETE FROM transport_materials;
-DELETE FROM drivers;
-DELETE FROM planning_memory;
+-- Eerst bestaande testdata opruimen (alleen in tabellen die bestaan, volgorde vanwege foreign keys)
+DO $$
+DECLARE
+  t text;
+  tables text[] := ARRAY[
+    'order_load_unload_instructions',
+    'driver_day_route_stops',
+    'driver_day_routes',
+    'order_transport_assignments',
+    'order_signatures',
+    'driver_schedule_exceptions',
+    'driver_weekly_schedules',
+    'orders',
+    'transport_combis',
+    'transport_materials',
+    'drivers',
+    'planning_memory'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tables LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
+      EXECUTE format('DELETE FROM %I', t);
+    END IF;
+  END LOOP;
+END $$;
 
 -- ============================================================================
 -- TRANSPORT MATERIALEN

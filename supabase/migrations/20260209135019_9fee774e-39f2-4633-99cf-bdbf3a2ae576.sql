@@ -24,8 +24,9 @@ CREATE POLICY "Signatures can be created"
 CREATE POLICY "Signatures can be deleted"
   ON public.order_signatures FOR DELETE USING (true);
 
--- Storage bucket voor handtekening afbeeldingen
-INSERT INTO storage.buckets (id, name, public) VALUES ('signatures', 'signatures', true);
+-- Storage bucket voor handtekening afbeeldingen (bestaat al dan overslaan)
+INSERT INTO storage.buckets (id, name, public) VALUES ('signatures', 'signatures', true)
+ON CONFLICT (id) DO NOTHING;
 
 CREATE POLICY "Signatures storage viewable by everyone"
   ON storage.objects FOR SELECT USING (bucket_id = 'signatures');

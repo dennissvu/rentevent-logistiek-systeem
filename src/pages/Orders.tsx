@@ -15,7 +15,7 @@ export default function Orders() {
   const filterParam = searchParams.get('filter');
   const initialUnassignedFilter = filterParam === 'unassigned';
   const initialStatusFilter = ['offerte', 'optie', 'bevestigd'].includes(filterParam || '') ? filterParam : undefined;
-  const { orders, isLoading, addOrder, updateOrder } = useOrders();
+  const { orders, isLoading, error, addOrder, updateOrder } = useOrders();
   const [filteredOrders, setFilteredOrders] = useState<OrderFormData[]>([]);
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -74,6 +74,40 @@ export default function Orders() {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-muted-foreground">Orders laden...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    const is401 = /401|Unauthorized|invalid.*key|JWT/i.test(error.message);
+    return (
+      <div className="space-y-4 max-w-2xl">
+        <h1 className="text-3xl font-bold tracking-tight">Orders</h1>
+        <Card className="border-destructive">
+          <CardHeader>
+            <CardTitle className="text-destructive">Orders konden niet worden geladen</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-muted-foreground">{error.message}</p>
+            {is401 ? (
+              <p className="text-sm text-muted-foreground space-y-1">
+                <span className="block">Mogelijke oorzaken:</span>
+                <ul className="list-disc list-inside ml-2 space-y-0.5">
+                  <li>Verkeerde of oude anon key → Project Settings → API, kopieer opnieuw <strong>anon public</strong> naar <code className="bg-muted px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code> in <code className="bg-muted px-1 rounded">.env</code> / <code className="bg-muted px-1 rounded">.env.local</code></li>
+                  <li>URL met trailing slash → gebruik <code className="bg-muted px-1 rounded">https://xxx.supabase.co</code> zonder slash aan het eind</li>
+                  <li>Anon-role uitgeschakeld of RLS blokkeert anon → in het dashboard: controleer of anon toegang mag hebben tot de <code className="bg-muted px-1 rounded">orders</code>-tabel (RLS-policies)</li>
+                </ul>
+                Herstart na wijziging de dev-server.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Controleer of de app verbonden is met het juiste Supabase-project. In <code className="bg-muted px-1 rounded">.env</code> of <code className="bg-muted px-1 rounded">.env.local</code>:{" "}
+                <code className="bg-muted px-1 rounded">VITE_SUPABASE_URL</code> en{" "}
+                <code className="bg-muted px-1 rounded">VITE_SUPABASE_PUBLISHABLE_KEY</code> moeten bij dat project horen.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </div>
     );
   }
