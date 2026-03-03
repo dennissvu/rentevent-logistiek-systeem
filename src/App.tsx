@@ -19,6 +19,8 @@ import ChauffeurView from "./pages/ChauffeurView";
 import RentalAgreement from "./pages/RentalAgreement";
 import SignedAgreementView from "./pages/SignedAgreementView";
 import Onderhoud from "./pages/Onderhoud";
+import Rapportages from "./pages/Rapportages";
+import Documenten from "./pages/Documenten";
 import Instellingen from "./pages/Instellingen";
 import DayRouteBuilder from "./pages/DayRouteBuilder";
 import Login from "./pages/Login";
@@ -96,6 +98,8 @@ function AppRoutes() {
               <Route path="/dagplanning" element={<DailyPlanning />} />
               <Route path="/route-builder" element={<DayRouteBuilder />} />
               <Route path="/onderhoud" element={<Onderhoud />} />
+              <Route path="/rapportages" element={<Rapportages />} />
+              <Route path="/documenten" element={<Documenten />} />
               <Route path="/instellingen" element={<Instellingen />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="*" element={<NotFound />} />
