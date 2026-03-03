@@ -21,6 +21,7 @@ import SignedAgreementView from "./pages/SignedAgreementView";
 import Onderhoud from "./pages/Onderhoud";
 import DayRouteBuilder from "./pages/DayRouteBuilder";
 import Login from "./pages/Login";
+import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
 import { getRedirectToAfterLogin } from "@/utils/authRedirect";
 import { useState } from "react";
@@ -48,6 +49,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!session) {
+    if (location.pathname === "/") {
+      return <Landing />;
+    }
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
