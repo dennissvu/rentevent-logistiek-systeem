@@ -664,10 +664,11 @@ $SEED$;
   i int;
   stmt text;
 BEGIN
-  arr := string_to_array(full_sql, E';\n');
+  full_sql := regexp_replace(full_sql, chr(13) || chr(10), chr(10), 'g');
+  arr := regexp_split_to_array(full_sql, E';\s*' || chr(10));
   FOR i IN 1..coalesce(array_length(arr, 1), 0) LOOP
     stmt := trim(arr[i]);
-    IF length(stmt) > 0 AND left(stmt, 2) <> '--' THEN
+    IF length(stmt) > 0 AND left(stmt, 2) <> '--' AND (stmt NOT LIKE '--%') THEN
       EXECUTE stmt || ';';
     END IF;
   END LOOP;

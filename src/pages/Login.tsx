@@ -1,5 +1,8 @@
 import { useState, useRef } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { getRedirectToAfterLogin } from "@/utils/authRedirect";
+import type { LoginLocationState } from "@/utils/authRedirect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +36,8 @@ const Login = () => {
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const failedAttemptsRef = useRef(0);
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +73,10 @@ const Login = () => {
         return;
       }
       failedAttemptsRef.current = 0;
+      // Meestal redirect LoginRoute zodra session in context staat (onAuthStateChange).
+      // Fallback: na korte delay zelf navigeren voor het geval de listener traag is.
+      const redirectTo = getRedirectToAfterLogin(location.state as LoginLocationState | null);
+      setTimeout(() => navigate(redirectTo, { replace: true }), 150);
     } finally {
       setIsLoading(false);
     }

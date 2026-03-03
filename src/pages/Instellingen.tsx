@@ -17,14 +17,16 @@ const Instellingen = () => {
     setReseedMessage(null);
     try {
       // Reseed via database RPC (geen Edge Function nodig, voorkomt Failed to fetch)
-      const { error } = await supabase.rpc("reseed_logistics_data");
+      const { error } = await supabase.rpc("reseed_logistics_data" as Parameters<typeof supabase.rpc>[0]);
       if (error) throw error;
       setReseedMessage({
         type: "success",
         text: "Database is succesvol gereseeded. Gebruikers zijn niet gewijzigd.",
       });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Reseed mislukt.";
+    } catch (e: unknown) {
+      const msg =
+        (e && typeof e === "object" && "message" in e && String((e as { message: unknown }).message)) ||
+        (e instanceof Error ? e.message : "Reseed mislukt.");
       const isRpcMissing =
         msg.includes("function") && (msg.includes("does not exist") || msg.includes("niet gevonden"));
       setReseedMessage({

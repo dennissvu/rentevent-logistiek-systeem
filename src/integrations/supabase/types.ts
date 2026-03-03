@@ -740,7 +740,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      reseed_logistics_data: {
+        Args: Record<string, never>;
+        Returns: undefined;
+      };
     }
     Enums: {
       [_ in never]: never
