@@ -12,6 +12,7 @@ import {
   ClipboardList,
   UserCheck,
   Route,
+  User,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -47,6 +48,7 @@ const mainItems = [
 ];
 
 const secondaryItems = [
+  { title: "Profiel", url: "/profile", icon: User },
   { title: "Onderhoud", url: "/onderhoud", icon: Wrench },
   { title: "Rapportages", url: "/rapportages", icon: BarChart3 },
   { title: "Documenten", url: "/documenten", icon: FileText },

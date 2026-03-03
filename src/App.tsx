@@ -19,9 +19,11 @@ import ChauffeurView from "./pages/ChauffeurView";
 import RentalAgreement from "./pages/RentalAgreement";
 import SignedAgreementView from "./pages/SignedAgreementView";
 import Onderhoud from "./pages/Onderhoud";
+import Instellingen from "./pages/Instellingen";
 import DayRouteBuilder from "./pages/DayRouteBuilder";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
+import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 import { getRedirectToAfterLogin } from "@/utils/authRedirect";
 import { useState } from "react";
@@ -94,6 +96,8 @@ function AppRoutes() {
               <Route path="/dagplanning" element={<DailyPlanning />} />
               <Route path="/route-builder" element={<DayRouteBuilder />} />
               <Route path="/onderhoud" element={<Onderhoud />} />
+              <Route path="/instellingen" element={<Instellingen />} />
+              <Route path="/profile" element={<Profile />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </AppLayout>
