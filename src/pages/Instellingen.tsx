@@ -28,11 +28,12 @@ const Instellingen = () => {
         (e && typeof e === "object" && "message" in e && String((e as { message: unknown }).message)) ||
         (e instanceof Error ? e.message : "Reseed mislukt.");
       const isRpcMissing =
-        msg.includes("function") && (msg.includes("does not exist") || msg.includes("niet gevonden"));
+        msg.includes("function") &&
+        (msg.includes("does not exist") || msg.includes("niet gevonden") || msg.includes("schema cache"));
       setReseedMessage({
         type: "error",
         text: isRpcMissing
-          ? "Reseed RPC ontbreekt. Voer eerst de migraties uit: supabase db push of supabase migration up. Daarna opnieuw proberen."
+          ? "Functie niet in schema cache. Oplossing: open Supabase Dashboard → SQL Editor, voer uit: NOTIFY pgrst, 'reload schema'; en probeer opnieuw. Als de fout blijft: voer eerst het migratiebestand supabase/migrations/20260303120000_add_reseed_rpc.sql uit in de SQL Editor (of run supabase db push), daarna opnieuw NOTIFY pgrst, 'reload schema';"
           : msg,
       });
     } finally {
