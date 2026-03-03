@@ -2,8 +2,51 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const normalizeEnvValue = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  const trimmed = value.trim().replace(/^['"]|['"]$/g, "");
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const isValidHttpUrl = (value: string | undefined): value is string => {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
+const getProjectRefFromAnonKey = (anonKey: string | undefined): string | undefined => {
+  if (!anonKey) return undefined;
+  try {
+    const parts = anonKey.split(".");
+    if (parts.length < 2) return undefined;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4 || 4)) % 4);
+    const json = atob(padded);
+    const payload = JSON.parse(json) as { ref?: string };
+    return payload.ref;
+  } catch {
+    return undefined;
+  }
+};
+
+const SUPABASE_PUBLISHABLE_KEY = normalizeEnvValue(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
+const ENV_SUPABASE_URL = normalizeEnvValue(import.meta.env.VITE_SUPABASE_URL);
+const PROJECT_ID = normalizeEnvValue(import.meta.env.VITE_SUPABASE_PROJECT_ID) ?? getProjectRefFromAnonKey(SUPABASE_PUBLISHABLE_KEY);
+const SUPABASE_URL = isValidHttpUrl(ENV_SUPABASE_URL)
+  ? ENV_SUPABASE_URL
+  : PROJECT_ID
+    ? `https://${PROJECT_ID}.supabase.co`
+    : undefined;
+
+if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+  throw new Error(
+    "Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in your .env."
+  );
+}
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";

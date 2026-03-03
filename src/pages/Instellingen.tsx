@@ -16,17 +16,22 @@ const Instellingen = () => {
     setReseedLoading(true);
     setReseedMessage(null);
     try {
-      const { data, error } = await supabase.functions.invoke("reseed-database", { body: {} });
+      // Reseed via database RPC (geen Edge Function nodig, voorkomt Failed to fetch)
+      const { error } = await supabase.rpc("reseed_logistics_data");
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
       setReseedMessage({
         type: "success",
-        text: data?.message ?? "Database is succesvol gereseeded. Gebruikers zijn niet gewijzigd.",
+        text: "Database is succesvol gereseeded. Gebruikers zijn niet gewijzigd.",
       });
     } catch (e) {
+      const msg = e instanceof Error ? e.message : "Reseed mislukt.";
+      const isRpcMissing =
+        msg.includes("function") && (msg.includes("does not exist") || msg.includes("niet gevonden"));
       setReseedMessage({
         type: "error",
-        text: e instanceof Error ? e.message : "Reseed mislukt.",
+        text: isRpcMissing
+          ? "Reseed RPC ontbreekt. Voer eerst de migraties uit: supabase db push of supabase migration up. Daarna opnieuw proberen."
+          : msg,
       });
     } finally {
       setReseedLoading(false);
