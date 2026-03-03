@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { OrdersProvider } from "@/context/OrdersContext";
 import { TransportProvider } from "@/context/TransportContext";
@@ -22,11 +22,22 @@ import Onderhoud from "./pages/Onderhoud";
 import DayRouteBuilder from "./pages/DayRouteBuilder";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
+import { getRedirectToAfterLogin } from "@/utils/authRedirect";
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 
+function LoginRoute({ session }: { session: ReturnType<typeof useAuth>["session"] }) {
+  const location = useLocation();
+  const redirectTo = getRedirectToAfterLogin(location.state as Parameters<typeof getRedirectToAfterLogin>[0]);
+  if (session) {
+    return <Navigate to={redirectTo} replace />;
+  }
+  return <Login />;
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -37,7 +48,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!session) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   return <>{children}</>;
@@ -56,11 +67,8 @@ function AppRoutes() {
 
   return (
     <Routes>
-      {/* Login */}
-      <Route
-        path="/login"
-        element={session ? <Navigate to="/" replace /> : <Login />}
-      />
+      {/* Login: redirect back to intended page after login */}
+      <Route path="/login" element={<LoginRoute session={session} />} />
 
       {/* Publieke routes - geen login nodig */}
       <Route path="/chauffeur" element={<ChauffeurView />} />

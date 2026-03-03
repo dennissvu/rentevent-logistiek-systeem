@@ -9,7 +9,7 @@ import { Loader2, Truck } from "lucide-react";
 const FAILED_ATTEMPTS_BEFORE_COOLDOWN = 3;
 const COOLDOWN_SECONDS = 60;
 
-function getUserFriendlyLoginError(message: string): string {
+export function getUserFriendlyLoginError(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes("invalid login credentials") || lower.includes("invalid_credentials")) {
     return "Ongeldig e-mailadres of wachtwoord.";

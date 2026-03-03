@@ -194,15 +194,30 @@ export default function ChauffeurView() {
   const selectedDriver = activeDrivers.find(d => d.id === selectedDriverId);
   const isToday = selectedDate === format(new Date(), 'yyyy-MM-dd');
 
-  // Persist driver selection
+  // Persist driver selection; only restore if the saved id is still a valid driver
   useEffect(() => {
     const saved = localStorage.getItem('chauffeur-driver-id');
-    if (saved && activeDrivers.find(d => d.id === saved)) {
-      setSelectedDriverId(saved);
+    if (!saved?.trim()) return;
+    const validDriver = activeDrivers.find(d => d.id === saved.trim());
+    if (validDriver) {
+      setSelectedDriverId(validDriver.id);
+    } else {
+      localStorage.removeItem('chauffeur-driver-id');
     }
   }, [activeDrivers]);
 
+  // Clear selection if the selected driver is no longer in the list (e.g. removed or unavailable)
+  useEffect(() => {
+    if (!selectedDriverId || activeDrivers.length === 0) return;
+    const stillValid = activeDrivers.some(d => d.id === selectedDriverId);
+    if (!stillValid) {
+      setSelectedDriverId(null);
+      localStorage.removeItem('chauffeur-driver-id');
+    }
+  }, [selectedDriverId, activeDrivers]);
+
   const handleSelectDriver = (id: string) => {
+    if (!id || !activeDrivers.some(d => d.id === id)) return;
     setSelectedDriverId(id);
     localStorage.setItem('chauffeur-driver-id', id);
   };
