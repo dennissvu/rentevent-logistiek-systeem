@@ -51,7 +51,6 @@ interface DriverRouteTimelineProps {
   onAddCustomStopBetween?: (params: {
     routeId: string;
     afterSequenceNumber: number;
-    stopType: 'tussenstop' | 'transportmateriaal';
     locationAddress: string;
     estimatedArrival: string;
     estimatedDeparture: string;
@@ -224,7 +223,6 @@ export function DriverRouteTimeline({
 
   const handleAddBlockSave = useCallback(
     async (params: {
-      stopType: 'tussenstop' | 'transportmateriaal';
       locationAddress: string;
       estimatedArrival: string;
       estimatedDeparture: string;
@@ -234,7 +232,6 @@ export function DriverRouteTimeline({
       await onAddCustomStopBetween({
         routeId: driver.routeId,
         afterSequenceNumber: addBlockAfterIdx + 1,
-        stopType: params.stopType,
         locationAddress: params.locationAddress,
         estimatedArrival: params.estimatedArrival,
         estimatedDeparture: params.estimatedDeparture,

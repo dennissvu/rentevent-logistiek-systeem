@@ -652,13 +652,12 @@ export function useDayRouteBuilder(date: string) {
     mutationFn: async (params: {
       routeId: string;
       afterSequenceNumber: number; // 1-based: insert after this
-      stopType: 'tussenstop' | 'transportmateriaal';
       locationAddress: string;
       estimatedArrival: string;
       estimatedDeparture: string;
       notes?: string | null;
     }) => {
-      const { routeId, afterSequenceNumber, stopType, locationAddress, estimatedArrival, estimatedDeparture, notes } = params;
+      const { routeId, afterSequenceNumber, locationAddress, estimatedArrival, estimatedDeparture, notes } = params;
       const newSeq = afterSequenceNumber + 1;
       const { data: existing } = await supabase
         .from('driver_day_route_stops')
@@ -677,7 +676,7 @@ export function useDayRouteBuilder(date: string) {
         order_id: null,
         assignment_id: null,
         sequence_number: newSeq,
-        stop_type: stopType,
+        stop_type: 'tussenstop',
         location_address: locationAddress.trim(),
         estimated_arrival: estimatedArrival,
         estimated_departure: estimatedDeparture,
@@ -842,9 +841,7 @@ export function useDayRouteBuilder(date: string) {
             };
           });
 
-          const customStops = driver.stops.filter(
-            s => s.stopType === 'tussenstop' || s.stopType === 'transportmateriaal'
-          );
+          const customStops = driver.stops.filter(s => s.stopType === 'tussenstop');
           const customStopRows: StopRow[] = customStops.map(t => ({
             route_id: driver.routeId!,
             order_id: null,

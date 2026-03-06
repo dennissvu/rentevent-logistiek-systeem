@@ -9,13 +9,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 /** Normaliseer tijd naar HH:mm voor type="time" (bijv. "09:30:00" → "09:30") */
 function toTimeValue(s: string | null | undefined): string {
@@ -36,7 +29,6 @@ interface AddBlockModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (params: {
-    stopType: 'tussenstop' | 'transportmateriaal';
     locationAddress: string;
     estimatedArrival: string;
     estimatedDeparture: string;
@@ -62,7 +54,6 @@ export function AddBlockModal({
   const [saving, setSaving] = useState(false);
   const [timeError, setTimeError] = useState('');
   const [addressError, setAddressError] = useState('');
-  const [stopType, setStopType] = useState<'tussenstop' | 'transportmateriaal'>('tussenstop');
 
   // Vul tijden in bij openen; zorg dat eindtijd niet vóór starttijd ligt
   useEffect(() => {
@@ -82,7 +73,6 @@ export function AddBlockModal({
     }
     setAddress('');
     setNotes('');
-    setStopType('tussenstop');
     setTimeError('');
     setAddressError('');
   }, [open, defaultArrival, defaultDeparture]);
@@ -115,7 +105,6 @@ export function AddBlockModal({
     setAddressError('');
     try {
       await onSave({
-        stopType,
         locationAddress: trimmedAddress,
         estimatedArrival: van,
         estimatedDeparture: tot,
@@ -138,21 +127,6 @@ export function AddBlockModal({
           <DialogTitle>Blok toevoegen</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <Label>Type</Label>
-            <Select
-              value={stopType}
-              onValueChange={value => setStopType(value as 'tussenstop' | 'transportmateriaal')}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Kies type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="tussenstop">Tussenstop</SelectItem>
-                <SelectItem value="transportmateriaal">Transportmateriaal</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
           <div className="grid gap-2">
             <Label>Adres *</Label>
             <Input
