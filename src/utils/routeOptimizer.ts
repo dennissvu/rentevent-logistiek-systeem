@@ -55,6 +55,7 @@ export interface OptimizedStop {
   isEstimate: boolean;
   orderId?: string;
   orderNumber?: string;
+  assignmentId?: string | null; // for persistence to driver_day_route_stops
   customerDeadline?: string; // HH:MM - when driver must be ready
   isLate: boolean; // Would the driver be late?
   minutesLate: number;
@@ -411,6 +412,7 @@ async function evaluateSequence(
       isEstimate: dt.isEstimate,
       orderId: seg.orderId,
       orderNumber: seg.orderNumber,
+      assignmentId: seg.assignmentId,
       customerDeadline: seg.customerStartTime,
       isLate,
       minutesLate,
@@ -479,6 +481,7 @@ async function evaluateSequence(
       isEstimate: dt.isEstimate,
       orderId: seg.orderId,
       orderNumber: seg.orderNumber,
+      assignmentId: seg.assignmentId,
       customerDeadline: seg.customerEndTime,
       isLate,
       minutesLate,
@@ -721,4 +724,20 @@ export async function optimizeRoute(
   }
 
   return bestRoute!;
+}
+
+/**
+ * Evaluate a fixed sequence of orders (no permutation).
+ * Use for Route Builder: respect manual stop order.
+ * Orders must be in desired sequence; deliveries and pickups are split by segment
+ * (deliveries first in order, then pickups in order).
+ */
+export async function evaluateFixedSequence(
+  orders: RouteOrder[],
+  date: string,
+): Promise<OptimizedRoute> {
+  const deliveryOrder = orders.filter(o => o.segment === 'leveren');
+  const pickupOrder = orders.filter(o => o.segment === 'ophalen');
+  const anyTrailer = orders.some(o => o.hasTrailer);
+  return evaluateSequence(deliveryOrder, pickupOrder, date, anyTrailer);
 }

@@ -15,11 +15,15 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  CheckCircle2,
   AlertCircle,
   Printer,
+  Plus,
+  Timer,
+  RefreshCw,
 } from 'lucide-react';
 import { StopCard } from './StopCard';
+import { EditStopTimeModal } from './EditStopTimeModal';
+import { AddBlockModal } from './AddBlockModal';
 import { useTransport } from '@/context/TransportContext';
 import type { RouteBuilderDriver, RouteBuilderStop, UnassignedStop } from '@/hooks/useDayRouteBuilder';
 
@@ -30,10 +34,34 @@ interface DriverRouteTimelineProps {
   onPrintRijlijst?: (driverId: string) => void;
   onReorderStops?: (routeId: string, stopIds: string[]) => void;
   onAssignTransport?: (driverId: string, transportMaterialId: string | null) => void;
+  onUpdateStopTiming?: (params: {
+    stopId: string;
+    estimatedArrival?: string;
+    estimatedDeparture?: string;
+    driveTimeFromPrevious?: number;
+    notes?: string | null;
+    locationAddress?: string | null;
+  }) => Promise<void>;
+  onRefreshDriveTime?: (params: {
+    stopId: string;
+    fromAddress: string;
+    toAddress: string;
+    departureTime: string;
+  }) => Promise<void>;
+  onAddCustomStopBetween?: (params: {
+    routeId: string;
+    afterSequenceNumber: number;
+    stopType: 'tussenstop' | 'transportmateriaal';
+    locationAddress: string;
+    estimatedArrival: string;
+    estimatedDeparture: string;
+    notes?: string | null;
+  }) => Promise<void>;
   dragOverDriverId?: string | null;
   onDragOver?: (e: React.DragEvent) => void;
   onDragLeave?: () => void;
   onDrop?: (e: React.DragEvent, driverId: string) => void;
+  isRefreshingDriveTime?: boolean;
 }
 
 const routeStatusLabels: Record<string, string> = {
@@ -56,14 +84,20 @@ export function DriverRouteTimeline({
   onPrintRijlijst,
   onReorderStops,
   onAssignTransport,
+  onUpdateStopTiming,
+  onRefreshDriveTime,
+  onAddCustomStopBetween,
   dragOverDriverId,
   onDragOver,
   onDragLeave,
   onDrop,
+  isRefreshingDriveTime,
 }: DriverRouteTimelineProps) {
   const [expanded, setExpanded] = useState(driver.stops.length > 0);
   const [dragOverStopIdx, setDragOverStopIdx] = useState<number | null>(null);
   const [draggingStopIdx, setDraggingStopIdx] = useState<number | null>(null);
+  const [editModalStop, setEditModalStop] = useState<RouteBuilderStop | null>(null);
+  const [addBlockAfterIdx, setAddBlockAfterIdx] = useState<number | null>(null);
   const { allTransportMaterials, combis } = useTransport();
 
   const hasStops = driver.stops.length > 0;
@@ -157,6 +191,58 @@ export function DriverRouteTimeline({
     setDraggingStopIdx(null);
     setDragOverStopIdx(null);
   }, []);
+
+  const handleEditTimeSave = useCallback(
+    async (params: {
+      stopId: string;
+      estimatedArrival?: string;
+      estimatedDeparture?: string;
+      driveTimeFromPrevious?: number;
+      notes?: string | null;
+      locationAddress?: string | null;
+    }) => {
+      if (onUpdateStopTiming) await onUpdateStopTiming(params);
+    },
+    [onUpdateStopTiming]
+  );
+
+  const handleRefreshDriveTime = useCallback(
+    (stop: RouteBuilderStop) => {
+      if (!onRefreshDriveTime) return;
+      const idx = driver.stops.findIndex(s => s.id === stop.id);
+      const prev = idx > 0 ? driver.stops[idx - 1] : null;
+      if (!prev) return;
+      onRefreshDriveTime({
+        stopId: stop.id,
+        fromAddress: prev.locationAddress || '',
+        toAddress: stop.locationAddress || '',
+        departureTime: (prev.estimatedDeparture || '00:00').slice(0, 5),
+      });
+    },
+    [driver.stops, onRefreshDriveTime]
+  );
+
+  const handleAddBlockSave = useCallback(
+    async (params: {
+      stopType: 'tussenstop' | 'transportmateriaal';
+      locationAddress: string;
+      estimatedArrival: string;
+      estimatedDeparture: string;
+      notes?: string | null;
+    }) => {
+      if (!onAddCustomStopBetween || !driver.routeId || addBlockAfterIdx == null) return;
+      await onAddCustomStopBetween({
+        routeId: driver.routeId,
+        afterSequenceNumber: addBlockAfterIdx + 1,
+        stopType: params.stopType,
+        locationAddress: params.locationAddress,
+        estimatedArrival: params.estimatedArrival,
+        estimatedDeparture: params.estimatedDeparture,
+        notes: params.notes,
+      });
+    },
+    [onAddCustomStopBetween, driver.routeId, addBlockAfterIdx]
+  );
 
   return (
     <Card
@@ -296,20 +382,54 @@ export function DriverRouteTimeline({
           {hasStops ? (
             <div className="space-y-0 mt-1">
               {driver.stops.map((stop, idx) => (
-                <StopCard
-                  key={stop.id}
-                  stop={stop}
-                  index={idx}
-                  isFirst={idx === 0}
-                  isLast={idx === driver.stops.length - 1}
-                  onRemove={onRemoveStop}
-                  draggable
-                  onDragStart={e => handleStopDragStart(e, idx)}
-                  onDragOver={e => handleStopDragOver(e, idx)}
-                  onDragLeave={handleStopDragLeave}
-                  onDrop={e => handleStopDrop(e, idx)}
-                  isDragOver={dragOverStopIdx === idx && draggingStopIdx !== idx}
-                />
+                <div key={stop.id}>
+                  {idx > 0 && (
+                    <div className="flex items-center gap-2 py-1.5 px-1 text-xs text-muted-foreground">
+                      <div className="w-4 border-l-2 border-dashed border-muted-foreground/30 h-4 shrink-0" />
+                      <Timer className="h-3.5 w-3.5 shrink-0" />
+                      <span className="shrink-0">
+                        {stop.driveTimeFromPrevious != null ? `${stop.driveTimeFromPrevious} min rijden` : '— min rijden'}
+                      </span>
+                      {onRefreshDriveTime && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => handleRefreshDriveTime(stop)}
+                          disabled={isRefreshingDriveTime}
+                          title="Rijtijd opnieuw ophalen (Google)"
+                        >
+                          <RefreshCw className={`h-3 w-3 ${isRefreshingDriveTime ? 'animate-spin' : ''}`} />
+                        </Button>
+                      )}
+                      {onAddCustomStopBetween && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => setAddBlockAfterIdx(idx - 1)}
+                          title="Blok toevoegen tussen stops"
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  <StopCard
+                    stop={stop}
+                    index={idx}
+                    isFirst={idx === 0}
+                    isLast={idx === driver.stops.length - 1}
+                    onRemove={onRemoveStop}
+                    onEdit={onUpdateStopTiming ? setEditModalStop : undefined}
+                    draggable
+                    onDragStart={e => handleStopDragStart(e, idx)}
+                    onDragOver={e => handleStopDragOver(e, idx)}
+                    onDragLeave={handleStopDragLeave}
+                    onDrop={e => handleStopDrop(e, idx)}
+                    isDragOver={dragOverStopIdx === idx && draggingStopIdx !== idx}
+                  />
+                </div>
               ))}
             </div>
           ) : (
@@ -336,6 +456,24 @@ export function DriverRouteTimeline({
           )}
         </CardContent>
       )}
+
+      <EditStopTimeModal
+        open={!!editModalStop}
+        onOpenChange={open => !open && setEditModalStop(null)}
+        stop={editModalStop}
+        onSave={handleEditTimeSave}
+      />
+      <AddBlockModal
+        open={addBlockAfterIdx != null}
+        onOpenChange={open => !open && setAddBlockAfterIdx(null)}
+        onSave={handleAddBlockSave}
+        defaultArrival={
+          addBlockAfterIdx != null ? driver.stops[addBlockAfterIdx]?.estimatedDeparture : null
+        }
+        defaultDeparture={
+          addBlockAfterIdx != null ? driver.stops[addBlockAfterIdx + 1]?.estimatedArrival : null
+        }
+      />
     </Card>
   );
 }

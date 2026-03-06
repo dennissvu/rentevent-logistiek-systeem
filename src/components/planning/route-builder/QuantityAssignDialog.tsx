@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { ArrowDown, ArrowUp, Truck } from 'lucide-react';
+import { ArrowDown, ArrowUp, Truck, Clock } from 'lucide-react';
 import { vehicleTypes as vehicleTypesList } from '@/data/transportData';
 import type { VehicleQuantity, UnassignedStop } from '@/hooks/useDayRouteBuilder';
 
@@ -19,7 +19,9 @@ interface QuantityAssignDialogProps {
   onOpenChange: (open: boolean) => void;
   stop: UnassignedStop | null;
   driverName: string;
-  onConfirm: (assignedVehicles: VehicleQuantity[]) => void;
+  targetDateLabel?: string;
+  initialTime?: string;
+  onConfirm: (assignedVehicles: VehicleQuantity[], plannedTime: string) => void;
 }
 
 export function QuantityAssignDialog({
@@ -27,9 +29,12 @@ export function QuantityAssignDialog({
   onOpenChange,
   stop,
   driverName,
+  targetDateLabel,
+  initialTime,
   onConfirm,
 }: QuantityAssignDialogProps) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [plannedTime, setPlannedTime] = useState('');
 
   // Initialize with remaining quantities
   useEffect(() => {
@@ -39,8 +44,9 @@ export function QuantityAssignDialog({
         initial[vt.type] = vt.count;
       }
       setQuantities(initial);
+      setPlannedTime((initialTime || stop.time || '').slice(0, 5));
     }
-  }, [stop]);
+  }, [initialTime, stop]);
 
   if (!stop) return null;
 
@@ -52,7 +58,7 @@ export function QuantityAssignDialog({
       .filter(([, count]) => count > 0)
       .map(([type, count]) => ({ type, count }));
 
-    onConfirm(assignedVehicles);
+    onConfirm(assignedVehicles, plannedTime);
     onOpenChange(false);
   };
 
@@ -88,6 +94,11 @@ export function QuantityAssignDialog({
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-1">{stop.customerName}</p>
+            {targetDateLabel && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Inplannen op: <span className="font-medium">{targetDateLabel}</span>
+              </p>
+            )}
             <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
               <Truck className="h-3 w-3" />
               <span>Totaal: {stop.vehicleSummary}</span>
@@ -97,6 +108,20 @@ export function QuantityAssignDialog({
                 Nog over: {stop.remainingVehicleSummary}
               </p>
             )}
+          </div>
+
+          {/* Planned time */}
+          <div className="space-y-2">
+            <Label className="text-sm">Tijd</Label>
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              <Input
+                type="time"
+                value={plannedTime}
+                onChange={e => setPlannedTime(e.target.value)}
+                className="w-40"
+              />
+            </div>
           </div>
 
           {/* Quantity inputs */}

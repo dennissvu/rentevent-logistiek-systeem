@@ -33,7 +33,10 @@ export default function DayRouteBuilder() {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [printingAll, setPrintingAll] = useState(false);
   const [printingDriverId, setPrintingDriverId] = useState<string | null>(null);
-  const [dragOverDriverId, setDragOverDriverId] = useState<string | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<{
+    driverId: string;
+    targetDateKey: 'prev' | 'current' | 'next';
+  } | null>(null);
 
   // Quantity assignment dialog state
   const [quantityDialogOpen, setQuantityDialogOpen] = useState(false);
@@ -41,9 +44,15 @@ export default function DayRouteBuilder() {
     stop: UnassignedStop;
     driverId: string;
     driverName: string;
+    targetDate: string;
+    targetDateLabel: string;
   } | null>(null);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
+  const prevDate = subDays(selectedDate, 1);
+  const nextDate = addDays(selectedDate, 1);
+  const prevDateStr = format(prevDate, 'yyyy-MM-dd');
+  const nextDateStr = format(nextDate, 'yyyy-MM-dd');
   const {
     orders,
     drivers,
@@ -53,8 +62,22 @@ export default function DayRouteBuilder() {
     removeStop,
     reorderStops,
     assignTransportMaterial,
+    updateStopTiming,
+    refreshDriveTimeForStop,
+    addCustomStopBetween,
     isAdding,
+    isRefreshingDriveTime,
+    createRijplanningForDate,
+    isCreatingRijplanning,
   } = useDayRouteBuilder(dateStr);
+  const {
+    drivers: prevDayDrivers,
+    addStopToDriver: addStopToDriverPrevDay,
+  } = useDayRouteBuilder(prevDateStr);
+  const {
+    drivers: nextDayDrivers,
+    addStopToDriver: addStopToDriverNextDay,
+  } = useDayRouteBuilder(nextDateStr);
 
   // ── Drag & drop (unassigned → driver) ───────────────
 
@@ -72,35 +95,57 @@ export default function DayRouteBuilder() {
   }, []);
 
   const handleDragOverDriver = useCallback(
-    (e: React.DragEvent, driverId: string) => {
+    (e: React.DragEvent, driverId: string, targetDateKey: 'prev' | 'current' | 'next') => {
       // Don't set dragOverDriverId for internal stop reorder
       if (e.dataTransfer.types.includes('text/stop-reorder')) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      setDragOverDriverId(driverId);
+      setDragOverTarget({ driverId, targetDateKey });
     },
     []
   );
 
   const handleDragLeave = useCallback(() => {
-    setDragOverDriverId(null);
+    setDragOverTarget(null);
   }, []);
 
   const handleDrop = useCallback(
-    async (e: React.DragEvent, driverId: string) => {
+    async (
+      e: React.DragEvent,
+      driverId: string,
+      targetDateKey: 'prev' | 'current' | 'next' = 'current'
+    ) => {
       e.preventDefault();
-      setDragOverDriverId(null);
+      setDragOverTarget(null);
 
       // Ignore internal stop reorder drops
       if (e.dataTransfer.types.includes('text/stop-reorder')) return;
 
       try {
         const data = JSON.parse(e.dataTransfer.getData('application/json')) as UnassignedStop;
-        const driver = drivers.find(d => d.id === driverId);
+        const targetDrivers =
+          targetDateKey === 'prev'
+            ? prevDayDrivers
+            : targetDateKey === 'next'
+            ? nextDayDrivers
+            : drivers;
+        const targetDate =
+          targetDateKey === 'prev'
+            ? prevDateStr
+            : targetDateKey === 'next'
+            ? nextDateStr
+            : dateStr;
+        const targetDateLabel =
+          targetDateKey === 'prev'
+            ? format(prevDate, 'EEEE d MMMM', { locale: nl })
+            : targetDateKey === 'next'
+            ? format(nextDate, 'EEEE d MMMM', { locale: nl })
+            : format(selectedDate, 'EEEE d MMMM', { locale: nl });
+        const driver = targetDrivers.find(d => d.id === driverId);
         const driverName = driver?.name || 'chauffeur';
 
         // Always show the quantity dialog so user can specify how many
-        setPendingDrop({ stop: data, driverId, driverName });
+        setPendingDrop({ stop: data, driverId, driverName, targetDate, targetDateLabel });
         setQuantityDialogOpen(true);
       } catch (err) {
         console.error('Drop error:', err);
@@ -110,17 +155,34 @@ export default function DayRouteBuilder() {
         });
       }
     },
-    [drivers, toast]
+    [
+      dateStr,
+      drivers,
+      nextDate,
+      nextDateStr,
+      nextDayDrivers,
+      prevDate,
+      prevDateStr,
+      prevDayDrivers,
+      selectedDate,
+      toast,
+    ]
   );
 
   const handleQuantityConfirm = useCallback(
-    async (assignedVehicles: VehicleQuantity[]) => {
+    async (assignedVehicles: VehicleQuantity[], plannedTime: string) => {
       if (!pendingDrop) return;
 
-      const { stop, driverId } = pendingDrop;
+      const { stop, driverId, targetDate, targetDateLabel } = pendingDrop;
+      const addStopToDriverForDate =
+        targetDate === prevDateStr
+          ? addStopToDriverPrevDay
+          : targetDate === nextDateStr
+          ? addStopToDriverNextDay
+          : addStopToDriver;
 
       try {
-        await addStopToDriver({
+        await addStopToDriverForDate({
           driverId,
           orderId: stop.orderId,
           assignmentId: stop.assignmentId,
@@ -128,13 +190,14 @@ export default function DayRouteBuilder() {
           stopType: stop.segment, // leveren or ophalen
           locationAddress: stop.location,
           assignedVehicles,
+          estimatedArrival: plannedTime || stop.time || undefined,
           notes: stop.notes || undefined,
         });
 
         const totalAssigned = assignedVehicles.reduce((s, v) => s + v.count, 0);
         toast({
           title: `${stop.segment === 'leveren' ? 'Levering' : 'Ophaling'} toegewezen`,
-          description: `${stop.orderNumber}: ${totalAssigned} stuks toegevoegd aan route`,
+          description: `${stop.orderNumber}: ${totalAssigned} stuks toegevoegd aan route (${targetDateLabel})`,
         });
       } catch (err) {
         console.error('Assign error:', err);
@@ -146,7 +209,15 @@ export default function DayRouteBuilder() {
 
       setPendingDrop(null);
     },
-    [pendingDrop, addStopToDriver, toast]
+    [
+      addStopToDriver,
+      addStopToDriverNextDay,
+      addStopToDriverPrevDay,
+      nextDateStr,
+      pendingDrop,
+      prevDateStr,
+      toast,
+    ]
   );
 
   // ── Reorder stops ───────────────────────────────────
@@ -216,10 +287,33 @@ export default function DayRouteBuilder() {
     }
   }, [dateStr, toast]);
 
+  const handleCreateRijplanning = useCallback(async () => {
+    try {
+      const { updated, errors } = await createRijplanningForDate();
+      if (errors.length > 0) {
+        toast({
+          title: updated > 0 ? 'Rijplanning gedeeltelijk aangemaakt' : 'Rijplanning mislukt',
+          description: errors.slice(0, 3).join('. ') + (errors.length > 3 ? ` (+${errors.length - 3} meer)` : ''),
+          variant: errors.length > 0 && updated === 0 ? 'destructive' : 'default',
+        });
+      } else {
+        toast({
+          title: 'Rijplanning aangemaakt',
+          description: updated === 0 ? 'Geen routes met stops om te plannen.' : `${updated} chauffeur(s) bijgewerkt.`,
+        });
+      }
+    } catch (err) {
+      console.error('Create rijplanning error:', err);
+      toast({ title: 'Fout bij creëren rijplanning', variant: 'destructive' });
+    }
+  }, [createRijplanningForDate, toast]);
+
   // ── Derived data ───────────────────────────────────────
 
   const busyDrivers = drivers.filter(d => d.stops.length > 0);
   const freeDrivers = drivers.filter(d => d.stops.length === 0);
+  const prevAvailableDrivers = prevDayDrivers.filter(d => d.stops.length === 0 && d.isAvailable);
+  const nextAvailableDrivers = nextDayDrivers.filter(d => d.stops.length === 0 && d.isAvailable);
   const totalStops = busyDrivers.reduce((s, d) => s + d.stops.length, 0);
 
   return (
@@ -293,6 +387,20 @@ export default function DayRouteBuilder() {
             {/* Actions */}
             <div className="flex items-center gap-2 ml-auto">
               <Button
+                onClick={handleCreateRijplanning}
+                disabled={isCreatingRijplanning || busyDrivers.length === 0}
+                variant="default"
+                size="sm"
+                className="gap-1.5"
+              >
+                {isCreatingRijplanning ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Route className="h-4 w-4" />
+                )}
+                Creëer rijplanning
+              </Button>
+              <Button
                 onClick={handlePrintAll}
                 disabled={printingAll || busyDrivers.length === 0}
                 variant="outline"
@@ -333,10 +441,18 @@ export default function DayRouteBuilder() {
                         onPrintRijlijst={handlePrintDriver}
                         onReorderStops={handleReorderStops}
                         onAssignTransport={handleAssignTransport}
-                        dragOverDriverId={dragOverDriverId}
-                        onDragOver={e => handleDragOverDriver(e, driver.id)}
+                        onUpdateStopTiming={updateStopTiming}
+                        onRefreshDriveTime={refreshDriveTimeForStop}
+                        onAddCustomStopBetween={addCustomStopBetween}
+                        isRefreshingDriveTime={isRefreshingDriveTime}
+                        dragOverDriverId={
+                          dragOverTarget?.targetDateKey === 'current'
+                            ? dragOverTarget.driverId
+                            : null
+                        }
+                        onDragOver={e => handleDragOverDriver(e, driver.id, 'current')}
                         onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
+                        onDrop={(e, id) => handleDrop(e, id, 'current')}
                       />
                     ))}
                   </div>
@@ -358,15 +474,68 @@ export default function DayRouteBuilder() {
                         onPrintRijlijst={handlePrintDriver}
                         onReorderStops={handleReorderStops}
                         onAssignTransport={handleAssignTransport}
-                        dragOverDriverId={dragOverDriverId}
-                        onDragOver={e => handleDragOverDriver(e, driver.id)}
+                        onUpdateStopTiming={updateStopTiming}
+                        onRefreshDriveTime={refreshDriveTimeForStop}
+                        onAddCustomStopBetween={addCustomStopBetween}
+                        isRefreshingDriveTime={isRefreshingDriveTime}
+                        dragOverDriverId={
+                          dragOverTarget?.targetDateKey === 'current'
+                            ? dragOverTarget.driverId
+                            : null
+                        }
+                        onDragOver={e => handleDragOverDriver(e, driver.id, 'current')}
                         onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
+                        onDrop={(e, id) => handleDrop(e, id, 'current')}
                       />
                     ))}
                   </div>
                 </div>
               )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div>
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                    Beschikbaar dag ervoor ({format(prevDate, 'EEE d MMM', { locale: nl })}) ({prevAvailableDrivers.length})
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {prevAvailableDrivers.map(driver => (
+                      <DriverRouteTimeline
+                        key={`prev-${driver.id}`}
+                        driver={driver}
+                        dragOverDriverId={
+                          dragOverTarget?.targetDateKey === 'prev'
+                            ? dragOverTarget.driverId
+                            : null
+                        }
+                        onDragOver={e => handleDragOverDriver(e, driver.id, 'prev')}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e, id) => handleDrop(e, id, 'prev')}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+                    Beschikbaar dag erna ({format(nextDate, 'EEE d MMM', { locale: nl })}) ({nextAvailableDrivers.length})
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {nextAvailableDrivers.map(driver => (
+                      <DriverRouteTimeline
+                        key={`next-${driver.id}`}
+                        driver={driver}
+                        dragOverDriverId={
+                          dragOverTarget?.targetDateKey === 'next'
+                            ? dragOverTarget.driverId
+                            : null
+                        }
+                        onDragOver={e => handleDragOverDriver(e, driver.id, 'next')}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e, id) => handleDrop(e, id, 'next')}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
 
               {/* Empty state */}
               {orders.length === 0 && (
@@ -392,6 +561,8 @@ export default function DayRouteBuilder() {
         }}
         stop={pendingDrop?.stop || null}
         driverName={pendingDrop?.driverName || ''}
+        targetDateLabel={pendingDrop?.targetDateLabel || ''}
+        initialTime={pendingDrop?.stop?.time || ''}
         onConfirm={handleQuantityConfirm}
       />
     </div>

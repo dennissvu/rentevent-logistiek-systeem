@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useTransport } from '@/context/TransportContext';
 import { vehicleTypes as vehicleTypesList } from '@/data/transportData';
 import { estimateLoadUnloadTime, needsTrailer, LOCATIONS } from '@/utils/driverScheduleCalculator';
+import { evaluateFixedSequence, type OptimizedStop, type RouteOrder } from '@/utils/routeOptimizer';
 
 // ── Types ──────────────────────────────────────────────
 
@@ -195,31 +196,45 @@ export function useDayRouteBuilder(date: string) {
         };
       }
 
-      const orderIds = dateOrders.map(o => o.id);
-
-      // 3. Fetch assignments and route stops
-      const [assignRes, stopsRes] = await Promise.all([
-        orderIds.length > 0
-          ? supabase
-              .from('order_transport_assignments')
-              .select('*')
-              .in('order_id', orderIds)
-              .order('sequence_number')
-          : Promise.resolve({ data: [], error: null }),
-        routes.length > 0
-          ? supabase
-              .from('driver_day_route_stops')
-              .select('*')
-              .in('route_id', routes.map(r => r.id))
-              .order('sequence_number')
-          : Promise.resolve({ data: [], error: null }),
-      ]);
-
-      const assignments = (assignRes.data || []) as any[];
+      // 3. Fetch route stops first (they may reference orders outside selected date)
+      const stopsRes = routes.length > 0
+        ? await supabase
+            .from('driver_day_route_stops')
+            .select('*')
+            .in('route_id', routes.map(r => r.id))
+            .order('sequence_number')
+        : { data: [], error: null };
+      if (stopsRes.error) throw stopsRes.error;
       const routeStops = (stopsRes.data || []) as any[];
 
+      // Include orders referenced by existing route stops, even if not active on selected date.
+      // This supports early deliveries / late pickups without breaking the planner.
+      const referencedOrderIds = new Set(
+        routeStops
+          .map((s: any) => s.order_id)
+          .filter((id: string | null): id is string => !!id)
+      );
+      const dateOrderIds = new Set(dateOrders.map(o => o.id));
+      const extraReferencedOrders = allOrders.filter(
+        o => referencedOrderIds.has(o.id) && !dateOrderIds.has(o.id)
+      );
+      const ordersForDayAndRoutes = [...dateOrders, ...extraReferencedOrders];
+
+      const assignmentOrderIds = Array.from(
+        new Set(ordersForDayAndRoutes.map(o => o.id))
+      );
+      const assignRes = assignmentOrderIds.length > 0
+        ? await supabase
+            .from('order_transport_assignments')
+            .select('*')
+            .in('order_id', assignmentOrderIds)
+            .order('sequence_number')
+        : { data: [], error: null };
+      if (assignRes.error) throw assignRes.error;
+      const assignments = (assignRes.data || []) as any[];
+
       // 4. Build orders
-      const orders: RouteBuilderOrder[] = dateOrders.map(o => {
+      const orders: RouteBuilderOrder[] = ordersForDayAndRoutes.map(o => {
         const deliveryDate = (o as any).delivery_date || o.start_date;
         const pickupDate = (o as any).pickup_date || o.end_date;
         const activeSegments: ('leveren' | 'ophalen')[] = [];
@@ -400,9 +415,10 @@ export function useDayRouteBuilder(date: string) {
         .sort((a: any, b: any) => a.sequence_number - b.sequence_number);
 
       const stops: RouteBuilderStop[] = driverStops.map((s: any) => {
-        const order = orderMap.get(s.order_id);
+        const order = s.order_id ? orderMap.get(s.order_id) : undefined;
         const assignment = s.assignment_id ? assignmentMap.get(s.assignment_id) : null;
-        const isLeveren = s.stop_type === 'leveren' || s.stop_type === 'laden_winkel';
+        const leverenTypes = ['laden_winkel', 'vertrek_winkel', 'aankoppelen_loods', 'leveren'];
+        const isLeveren = leverenTypes.includes(s.stop_type);
         const seg: 'leveren' | 'ophalen' = isLeveren ? 'leveren' : 'ophalen';
 
         const assignedVehicles = (s.assigned_vehicles as VehicleQuantity[] | null) || null;
@@ -415,7 +431,7 @@ export function useDayRouteBuilder(date: string) {
 
         return {
           id: s.id,
-          orderId: s.order_id,
+          orderId: s.order_id ?? '',
           orderNumber: order?.orderNumber || '?',
           customerName: order?.customerName || 'Onbekend',
           companyName: order?.companyName || null,
@@ -574,6 +590,8 @@ export function useDayRouteBuilder(date: string) {
       estimatedDeparture?: string;
       driveTimeFromPrevious?: number;
       loadUnloadMinutes?: number;
+      notes?: string | null;
+      locationAddress?: string | null;
     }) => {
       const { stopId, ...updates } = params;
       const dbUpdates: Record<string, any> = {};
@@ -585,12 +603,89 @@ export function useDayRouteBuilder(date: string) {
         dbUpdates.drive_time_from_previous = updates.driveTimeFromPrevious;
       if (updates.loadUnloadMinutes !== undefined)
         dbUpdates.load_unload_minutes = updates.loadUnloadMinutes;
+      if (updates.notes !== undefined)
+        dbUpdates.notes = updates.notes;
+      if (updates.locationAddress !== undefined)
+        dbUpdates.location_address = updates.locationAddress;
 
       const { error } = await supabase
         .from('driver_day_route_stops')
         .update(dbUpdates)
         .eq('id', stopId);
       if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['day-route-builder'] });
+    },
+  });
+
+  const refreshDriveTimeMutation = useMutation({
+    mutationFn: async (params: {
+      stopId: string;
+      fromAddress: string;
+      toAddress: string;
+      departureTime: string; // HH:MM
+    }) => {
+      const { stopId, fromAddress, toAddress, departureTime } = params;
+      const departureIso = `${date}T${departureTime}:00`;
+      const { data, error: fnError } = await supabase.functions.invoke('calculate-drive-time', {
+        body: {
+          origin: fromAddress,
+          destination: toAddress,
+          departureTime: departureIso,
+        },
+      });
+      if (fnError) throw fnError;
+      const minutes = (data?.trafficDurationMinutes ?? data?.durationMinutes) ?? 0;
+      const { error: updateError } = await supabase
+        .from('driver_day_route_stops')
+        .update({ drive_time_from_previous: minutes })
+        .eq('id', stopId);
+      if (updateError) throw updateError;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['day-route-builder'] });
+    },
+  });
+
+  const addCustomStopBetweenMutation = useMutation({
+    mutationFn: async (params: {
+      routeId: string;
+      afterSequenceNumber: number; // 1-based: insert after this
+      stopType: 'tussenstop' | 'transportmateriaal';
+      locationAddress: string;
+      estimatedArrival: string;
+      estimatedDeparture: string;
+      notes?: string | null;
+    }) => {
+      const { routeId, afterSequenceNumber, stopType, locationAddress, estimatedArrival, estimatedDeparture, notes } = params;
+      const newSeq = afterSequenceNumber + 1;
+      const { data: existing } = await supabase
+        .from('driver_day_route_stops')
+        .select('id, sequence_number')
+        .eq('route_id', routeId)
+        .gte('sequence_number', newSeq)
+        .order('sequence_number', { ascending: false });
+      for (const row of existing || []) {
+        await supabase
+          .from('driver_day_route_stops')
+          .update({ sequence_number: (row as { id: string; sequence_number: number }).sequence_number + 1 })
+          .eq('id', (row as { id: string }).id);
+      }
+      const { error: insertErr } = await supabase.from('driver_day_route_stops').insert({
+        route_id: routeId,
+        order_id: null,
+        assignment_id: null,
+        sequence_number: newSeq,
+        stop_type: stopType,
+        location_address: locationAddress.trim(),
+        estimated_arrival: estimatedArrival,
+        estimated_departure: estimatedDeparture,
+        drive_time_from_previous: null,
+        load_unload_minutes: null,
+        notes: notes ?? null,
+      });
+      if (insertErr) throw insertErr;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['day-route-builder'] });
@@ -654,6 +749,154 @@ export function useDayRouteBuilder(date: string) {
     },
   });
 
+  const createRijplanningMutation = useMutation({
+    mutationFn: async (): Promise<{ updated: number; errors: string[] }> => {
+      const data = queryClient.getQueryData<{
+        drivers: RouteBuilderDriver[];
+        orders: RouteBuilderOrder[];
+      }>(['day-route-builder', date, allTransport.length]);
+      if (!data?.drivers?.length) return { updated: 0, errors: [] };
+
+      const orderMap = new Map(data.orders.map(o => [o.id, o]));
+      const errors: string[] = [];
+      let updated = 0;
+
+      for (const driver of data.drivers) {
+        const customerStops = driver.stops
+          .filter(s => s.stopType === 'leveren' || s.stopType === 'ophalen')
+          .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+        if (customerStops.length === 0) continue;
+        if (!driver.routeId) {
+          errors.push(`${driver.name}: geen route (voeg eerst stops toe)`);
+          continue;
+        }
+
+        const routeOrders: RouteOrder[] = customerStops.map(stop => {
+          const order = orderMap.get(stop.orderId);
+          if (!order) {
+            throw new Error(`Order ${stop.orderId} niet gevonden`);
+          }
+          const transportId = driver.transportMaterialId || '';
+          return {
+            orderId: order.id,
+            orderNumber: order.orderNumber,
+            customerName: order.customerName,
+            deliveryAddress: order.startLocation,
+            pickupAddress: order.endLocation,
+            customerStartTime: (order.deliveryTime || order.startTime)?.slice(0, 5) || '09:00',
+            customerEndTime: (order.pickupTime || order.endTime)?.slice(0, 5) || '17:00',
+            startDate: order.startDate,
+            endDate: order.endDate,
+            vehicleCount: stop.assignedTotalVehicles || stop.totalVehicles || 0,
+            transportId,
+            hasTrailer: needsTrailer(transportId),
+            assignmentId: stop.assignmentId || '',
+            segment: stop.segment,
+          };
+        });
+
+        try {
+          const result = await evaluateFixedSequence(routeOrders, date);
+          const originalStopsByOrderAndSegment = new Map(
+            customerStops.map(s => [`${s.orderId}-${s.segment}`, s])
+          );
+
+          type StopRow = {
+            route_id: string;
+            order_id: string | null;
+            assignment_id: string | null;
+            sequence_number: number;
+            stop_type: string;
+            location_address: string | null;
+            estimated_arrival: string | null;
+            estimated_departure: string | null;
+            drive_time_from_previous: number | null;
+            load_unload_minutes: number | null;
+            assigned_vehicles: VehicleQuantity[] | null;
+            notes?: string | null;
+          };
+
+          const newStopRows: StopRow[] = result.stops.map((s: OptimizedStop) => {
+            const rawOrderId = s.orderId ?? null;
+            const rawAssignmentId = s.assignmentId ?? null;
+            const orderId = rawOrderId && rawOrderId !== '' ? rawOrderId : null;
+            const assignmentId = rawAssignmentId && rawAssignmentId !== '' ? rawAssignmentId : null;
+            let assignedVehicles: VehicleQuantity[] | null = null;
+            if (s.type === 'leveren' || s.type === 'ophalen') {
+              const orig = originalStopsByOrderAndSegment.get(`${orderId}-${s.type === 'leveren' ? 'leveren' : 'ophalen'}`);
+              if (orig?.assignedVehicles?.length) assignedVehicles = orig.assignedVehicles;
+            }
+            const address = s.address === 'winkel' ? LOCATIONS.winkel : s.address === 'loods' ? LOCATIONS.loods : s.address;
+            return {
+              route_id: driver.routeId!,
+              order_id: orderId,
+              assignment_id: assignmentId,
+              sequence_number: 0,
+              stop_type: s.type,
+              location_address: address,
+              estimated_arrival: s.estimatedArrival || null,
+              estimated_departure: s.estimatedDeparture || null,
+              drive_time_from_previous: s.driveTimeFromPrevious ?? null,
+              load_unload_minutes: s.durationMinutes ?? null,
+              assigned_vehicles: assignedVehicles,
+            };
+          });
+
+          const customStops = driver.stops.filter(
+            s => s.stopType === 'tussenstop' || s.stopType === 'transportmateriaal'
+          );
+          const customStopRows: StopRow[] = customStops.map(t => ({
+            route_id: driver.routeId!,
+            order_id: null,
+            assignment_id: null,
+            sequence_number: 0,
+            stop_type: t.stopType,
+            location_address: t.locationAddress || null,
+            estimated_arrival: t.estimatedArrival || null,
+            estimated_departure: t.estimatedDeparture || null,
+            drive_time_from_previous: null,
+            load_unload_minutes: null,
+            assigned_vehicles: null,
+            notes: t.notes ?? null,
+          }));
+
+          const combined: StopRow[] = [...newStopRows, ...customStopRows];
+          const sortKey = (r: StopRow) => r.estimated_arrival ?? '23:59';
+          combined.sort((a, b) => String(sortKey(a)).localeCompare(String(sortKey(b))));
+          combined.forEach((r, idx) => {
+            r.sequence_number = idx + 1;
+          });
+
+          const { error: deleteErr } = await supabase
+            .from('driver_day_route_stops')
+            .delete()
+            .eq('route_id', driver.routeId);
+          if (deleteErr) {
+            errors.push(`${driver.name}: ${deleteErr.message}`);
+            continue;
+          }
+
+          const { error: insertErr } = await supabase
+            .from('driver_day_route_stops')
+            .insert(combined);
+          if (insertErr) {
+            errors.push(`${driver.name}: ${insertErr.message}`);
+            continue;
+          }
+          updated += 1;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${driver.name}: ${msg}`);
+        }
+      }
+
+      return { updated, errors };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['day-route-builder'] });
+    },
+  });
+
   return {
     orders: query.data?.orders || [],
     drivers: query.data?.drivers || [],
@@ -668,5 +911,12 @@ export function useDayRouteBuilder(date: string) {
     updateRouteStatus: updateRouteStatusMutation.mutateAsync,
     assignTransportMaterial: assignTransportMaterialMutation.mutateAsync,
     isAdding: addStopToDriverMutation.isPending,
+    createRijplanningForDate: createRijplanningMutation.mutateAsync,
+    isCreatingRijplanning: createRijplanningMutation.isPending,
+    updateStopNotes: updateStopTimingMutation.mutateAsync,
+    refreshDriveTimeForStop: refreshDriveTimeMutation.mutateAsync,
+    addCustomStopBetween: addCustomStopBetweenMutation.mutateAsync,
+    isRefreshingDriveTime: refreshDriveTimeMutation.isPending,
+    isAddingCustomStop: addCustomStopBetweenMutation.isPending,
   };
 }

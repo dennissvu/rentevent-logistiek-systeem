@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useQuery } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import { nl } from 'date-fns/locale';
 import { 
@@ -23,8 +24,6 @@ import {
   Truck,
   User,
   Pencil,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -86,6 +85,7 @@ import { useLoadUnloadInstructions } from '@/hooks/useLoadUnloadInstructions';
 import { TIME_CONSTANTS, calculateCombinedUnloadTime, needsTrailer as checkNeedsTrailer } from '@/utils/driverScheduleCalculator';
 import { calculateDriverShopTime } from '@/utils/shopTimeCalculator';
 import { downloadIcsFile } from '@/utils/icsGenerator';
+import { supabase } from '@/integrations/supabase/client';
 
 const orderFormSchema = z.object({
   firstName: z.string().min(1, 'Voornaam is verplicht'),
@@ -106,6 +106,20 @@ const orderFormSchema = z.object({
 
 type OrderFormValues = z.infer<typeof orderFormSchema>;
 
+const routeStopTypeLabels: Record<string, string> = {
+  laden_winkel: 'Laden bij winkel',
+  vertrek_winkel: 'Vertrek winkel',
+  aankoppelen_loods: 'Aanhanger koppelen',
+  leveren: 'Leveren',
+  ophalen: 'Ophalen',
+  lossen_winkel: 'Lossen bij winkel',
+  afkoppelen_loods: 'Aanhanger afkoppelen',
+  aankomst_winkel: 'Aankomst winkel',
+  wachttijd: 'Wachttijd',
+  tussenstop: 'Tussenstop',
+  transportmateriaal: 'Transportmateriaal',
+};
+
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -113,7 +127,6 @@ export default function OrderDetail() {
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [editVehicleTypes, setEditVehicleTypes] = useState<VehicleSelection[]>([]);
-  const [showTransportEdit, setShowTransportEdit] = useState(false);
   const [planConfirmedManually, setPlanConfirmedManually] = useState(false);
   
   // Haal multi-transport assignments op
@@ -130,9 +143,86 @@ export default function OrderDetail() {
   const setPlanConfirmed = setPlanConfirmedManually;
 
   const order = orders.find((o) => o.id === id);
+  const allTransport = [...bakwagens, ...aanhangers, ...combis];
+
+  const routeStopsQuery = useQuery({
+    queryKey: ['order-route-stops', order?.id],
+    queryFn: async () => {
+      if (!order?.id) return [];
+
+      const { data: stops, error: stopsErr } = await supabase
+        .from('driver_day_route_stops')
+        .select('id, route_id, assignment_id, sequence_number, stop_type, location_address, estimated_arrival, estimated_departure, notes')
+        .eq('order_id', order.id)
+        .order('sequence_number');
+
+      if (stopsErr) throw stopsErr;
+      if (!stops?.length) return [];
+
+      const routeIds = [...new Set(stops.map(s => s.route_id))];
+      const assignmentIds = [...new Set(stops.map(s => s.assignment_id).filter(Boolean) as string[])];
+
+      const [routesRes, assignmentsRes] = await Promise.all([
+        supabase
+          .from('driver_day_routes')
+          .select('id, driver_id, route_date')
+          .in('id', routeIds),
+        assignmentIds.length > 0
+          ? supabase
+              .from('order_transport_assignments')
+              .select('id, segment, transport_id')
+              .in('id', assignmentIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (routesRes.error) throw routesRes.error;
+      if (assignmentsRes.error) throw assignmentsRes.error;
+
+      const driverIds = [...new Set((routesRes.data || []).map(r => r.driver_id).filter(Boolean))];
+      const driversRes = driverIds.length > 0
+        ? await supabase
+            .from('drivers')
+            .select('id, name')
+            .in('id', driverIds)
+        : { data: [], error: null };
+
+      if (driversRes.error) throw driversRes.error;
+
+      const routeMap = new Map((routesRes.data || []).map(r => [r.id, r]));
+      const assignmentMap = new Map((assignmentsRes.data || []).map(a => [a.id, a]));
+      const driverMap = new Map((driversRes.data || []).map(d => [d.id, d.name]));
+
+      return stops.map(stop => {
+        const route = routeMap.get(stop.route_id);
+        const assignment = stop.assignment_id ? assignmentMap.get(stop.assignment_id) : null;
+        const transport = assignment?.transport_id
+          ? allTransport.find(t => t.id === assignment.transport_id)
+          : null;
+
+        return {
+          id: stop.id,
+          routeDate: route?.route_date || null,
+          sequenceNumber: stop.sequence_number,
+          stopType: stop.stop_type,
+          locationAddress: stop.location_address,
+          estimatedArrival: stop.estimated_arrival,
+          estimatedDeparture: stop.estimated_departure,
+          notes: stop.notes,
+          segment: (assignment?.segment as 'leveren' | 'ophalen' | undefined) || null,
+          driverName: route?.driver_id ? (driverMap.get(route.driver_id) || 'Onbekend') : 'Onbekend',
+          transportName: transport?.name || null,
+        };
+      }).sort((a, b) => {
+        if (a.routeDate && b.routeDate && a.routeDate !== b.routeDate) {
+          return a.routeDate.localeCompare(b.routeDate);
+        }
+        return a.sequenceNumber - b.sequenceNumber;
+      });
+    },
+    enabled: !!order?.id && !isEditing && order?.status === 'bevestigd',
+  });
 
   // Build print context for trip documents
-  const allTransport = [...bakwagens, ...aanhangers, ...combis];
   const printContext: TripPrintContext | undefined = useMemo(() => {
     if (!order) return undefined;
     const vtSummary = (order.vehicleTypes || [])
@@ -930,29 +1020,10 @@ export default function OrderDetail() {
         <div className="mt-6">
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Truck className="h-5 w-5" />
-                  Transport & Chauffeurs
-                </CardTitle>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowTransportEdit(!showTransportEdit)}
-                >
-                  {showTransportEdit ? (
-                    <>
-                      <ChevronUp className="h-4 w-4 mr-1" />
-                      Sluiten
-                    </>
-                  ) : (
-                    <>
-                      <Pencil className="h-4 w-4 mr-1" />
-                      Wijzigen
-                    </>
-                  )}
-                </Button>
-              </div>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Truck className="h-5 w-5" />
+                Transport & Chauffeurs
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {/* Assignment summary */}
@@ -1014,20 +1085,57 @@ export default function OrderDetail() {
                 <p className="text-muted-foreground italic text-sm">Nog geen transport of chauffeur toegewezen</p>
               )}
 
-              {/* Collapsible edit panel */}
-              {showTransportEdit && (
-                <div className="mt-4 pt-4 border-t">
-                  <MultiTransportAssignment
-                    orderId={order.id}
-                    vehicles={(order.vehicleTypes || []).map(vt => ({
-                      type: vt.type,
-                      count: vt.count,
-                    })) as VehicleCount[]}
-                    startTime={order.startTime}
-                    endTime={order.endTime}
-                  />
-                </div>
-              )}
+              <div className="mt-4 pt-4 border-t space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Ritten voor deze order (driver_day_route_stops)
+                </p>
+
+                {routeStopsQuery.isLoading ? (
+                  <p className="text-sm text-muted-foreground">Ritregels laden...</p>
+                ) : (routeStopsQuery.data && routeStopsQuery.data.length > 0) ? (
+                  <div className="space-y-2">
+                    {routeStopsQuery.data.map((stop) => (
+                      <div key={stop.id} className="rounded-md border p-2.5 bg-muted/30">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                          <span className="font-medium">
+                            {stop.routeDate ? format(parseISO(stop.routeDate), 'EEE dd-MM-yyyy', { locale: nl }) : 'Datum onbekend'}
+                          </span>
+                          <span className="text-muted-foreground">#{stop.sequenceNumber}</span>
+                          <Badge variant="outline">
+                            {routeStopTypeLabels[stop.stopType] || stop.stopType}
+                          </Badge>
+                          {stop.segment && (
+                            <Badge variant="secondary">
+                              {stop.segment === 'leveren' ? 'Leveren' : 'Ophalen'}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          Chauffeur: <span className="text-foreground">{stop.driverName}</span>
+                          {stop.transportName ? <> • Transport: <span className="text-foreground">{stop.transportName}</span></> : null}
+                          {(stop.estimatedArrival || stop.estimatedDeparture) ? (
+                            <>
+                              {' '}• Tijd: <span className="text-foreground">{stop.estimatedArrival?.slice(0, 5) || '--:--'}</span>
+                              {' - '}
+                              <span className="text-foreground">{stop.estimatedDeparture?.slice(0, 5) || '--:--'}</span>
+                            </>
+                          ) : null}
+                        </div>
+                        {(stop.locationAddress || stop.notes) && (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {stop.locationAddress ? <>Locatie: {stop.locationAddress}</> : null}
+                            {stop.locationAddress && stop.notes ? ' • ' : null}
+                            {stop.notes ? <>Notitie: {stop.notes}</> : null}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">Geen ritregels gekoppeld aan deze order.</p>
+                )}
+              </div>
+
             </CardContent>
           </Card>
         </div>

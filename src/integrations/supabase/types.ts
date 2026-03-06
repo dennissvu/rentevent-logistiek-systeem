@@ -26,7 +26,7 @@ export type Database = {
           load_unload_minutes: number | null
           location_address: string | null
           notes: string | null
-          order_id: string
+          order_id: string | null
           route_id: string
           sequence_number: number
           stop_type: string
@@ -43,7 +43,7 @@ export type Database = {
           load_unload_minutes?: number | null
           location_address?: string | null
           notes?: string | null
-          order_id: string
+          order_id?: string | null
           route_id: string
           sequence_number?: number
           stop_type: string
